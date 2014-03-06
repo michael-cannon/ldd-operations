@@ -360,15 +360,11 @@ class LDD_Operations extends Aihrus_Common {
 Order #{receipt_id} - {admin_order_details}
 {date}
 
-<h3>Service Purchased</h3>
+<h2>Service Purchased</h2>
 {cart_items}
 
-<h2>Delivery Instructions</h2>
-{ldd_ordering_delivery}
-
-<h3>Document Links</h3>
-{file_urls}
-{ldd_court_filings}
+<h2>Delivery Information</h2>
+{ldd_delivery_details}
 
 <h2>Client Information</h2>
 {ldd_company}

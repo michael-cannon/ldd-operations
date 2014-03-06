@@ -32,7 +32,8 @@ class LDD_Operations extends Aihrus_Common {
 	public static $styles        = array();
 	public static $styles_called = false;
 
-	public static $post_id;
+	public static $delivery_record_url;
+	public static $payment_history_url;
 
 
 	public function __construct() {
@@ -41,7 +42,11 @@ class LDD_Operations extends Aihrus_Common {
 		self::$plugin_assets = plugins_url( '/assets/', dirname( __FILE__ ) );
 		self::$plugin_assets = self::strip_protocol( self::$plugin_assets );
 
+		self::$delivery_record_url = admin_url( 'post.php?action=edit' );
+		self::$payment_history_url = admin_url( 'edit.php?post_type=download&page=edd-payment-history' );
+
 		self::actions();
+		self::filters();
 
 		add_action( 'admin_init', array( __CLASS__, 'admin_init' ) );
 		// fixme add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
@@ -76,7 +81,14 @@ class LDD_Operations extends Aihrus_Common {
 
 
 	public static function actions() {
-		add_action( 'edd_admin_sale_notice', 'delivery_notice_initial', 10, 2 );
+		add_action( 'edd_admin_sale_notice', array( __CLASS__, 'new_delivery_notice' ), 10, 2 );
+	}
+
+
+	public static function filters() {
+		add_filter( 'ldd_sections', array( __CLASS__, 'sections' ) );
+		add_filter( 'ldd_settings', array( __CLASS__, 'settings' ) );
+		add_filter( 'edd_email_template_tags', array( __CLASS__, 'edd_email_template_tags' ), 10, 3 );
 	}
 
 
@@ -224,20 +236,18 @@ class LDD_Operations extends Aihrus_Common {
 
 
 	/**
-	 * Sends the initial delivery notice
+	 * Sends the new delivery notice
 	 *
 	 * @param int $payment_id Payment ID (default: 0)
 	 * @param array $payment_data Payment Meta and Data
 	 * @return void
 	 */
-	function delivery_notice_initial( $payment_id = 0, $payment_data = array() ) {
-		global $edd_options;
-
+	public static function new_delivery_notice( $payment_id = 0, $payment_data = array() ) {
 		/* Send an email notification to the admin */
-		$admin_email = edd_get_admin_notice_emails();
-		$user_id     = edd_get_payment_user_id( $payment_id );
-		$user_info   = maybe_unserialize( $payment_data['user_info'] );
+		$admin_email = ldd_get_option( 'notify', edd_get_admin_notice_emails() );
 
+		$user_id   = edd_get_payment_user_id( $payment_id );
+		$user_info = maybe_unserialize( $payment_data['user_info'] );
 		if ( isset( $user_id ) && $user_id > 0 ) {
 			$user_data = get_userdata($user_id);
 			$name      = $user_data->display_name;
@@ -248,29 +258,22 @@ class LDD_Operations extends Aihrus_Common {
 		}
 
 		$admin_message  = edd_get_email_body_header();
-		// fixme
-		$admin_message .= self::delivery_notification_body_content( $payment_id, $payment_data );
+		$admin_message .= self::new_delivery_body( $payment_id, $payment_data );
 		$admin_message .= edd_get_email_body_footer();
 
-		// fixme
-		if( ! empty( $edd_options['delivery_notification_subject'] ) ) {
-			$admin_subject = wp_strip_all_tags( $edd_options['delivery_notification_subject'], true );
-		} else {
-			$admin_subject = sprintf( __( 'New Delivery Notice - Order #%1$s' ), $payment_id );
-		}
-
+		$admin_subject = ldd_get_option( 'new_delivery_subject' );
 		$admin_subject = edd_do_email_tags( $admin_subject, $payment_id );
-		$admin_subject = apply_filters( 'ldd_operations_delivery_notification_subject', $admin_subject, $payment_id, $payment_data );
+		$admin_subject = apply_filters( 'ldd_operations_new_delivery_subject', $admin_subject, $payment_id, $payment_data );
 
-		$from_name  = isset( $edd_options['from_name'] )  ? $edd_options['from_name']  : get_bloginfo('name');
-		$from_email = isset( $edd_options['from_email'] ) ? $edd_options['from_email'] : get_option('admin_email');
+		$from_name  = self::get_edd_options( 'from_name', get_bloginfo( 'name' ) );
+		$from_email = self::get_edd_options( 'from_email', get_option( 'admin_email' ) );
 
 		$admin_headers  = "From: " . stripslashes_deep( html_entity_decode( $from_name, ENT_COMPAT, 'UTF-8' ) ) . " <$from_email>\r\n";
 		$admin_headers .= "Reply-To: ". $from_email . "\r\n";
 		$admin_headers .= "Content-Type: text/html; charset=utf-8\r\n";
-		$admin_headers .= apply_filters( 'ldd_operations_delivery_notification_headers', $admin_headers, $payment_id, $payment_data );
+		$admin_headers .= apply_filters( 'ldd_operations_new_delivery_headers', $admin_headers, $payment_id, $payment_data );
 
-		$admin_attachments = apply_filters( 'ldd_operations_delivery_notification_attachments', array(), $payment_id, $payment_data );
+		$admin_attachments = apply_filters( 'ldd_operations_new_delivery_attachments', array(), $payment_id, $payment_data );
 
 		wp_mail( $admin_email, $admin_subject, $admin_message, $admin_headers, $admin_attachments );
 	}
@@ -283,55 +286,196 @@ class LDD_Operations extends Aihrus_Common {
 	 * @param array $payment_data Payment Data
 	 * @return string $email_body Body of the email
 	 */
-	function delivery_notification_body_content( $payment_id = 0, $payment_data = array() ) {
-		global $edd_options;
-
-		$user_info = maybe_unserialize( $payment_data['user_info'] );
-		$email     = edd_get_payment_user_email( $payment_id );
-
-		if( isset( $user_info['id'] ) && $user_info['id'] > 0 ) {
-			$user_data = get_userdata( $user_info['id'] );
-			$name      = $user_data->display_name;
-		} elseif( isset( $user_info['first_name'] ) && isset( $user_info['last_name'] ) ) {
-			$name = $user_info['first_name'] . ' ' . $user_info['last_name'];
-		} else {
-			$name = $email;
-		}
-
-		$download_list = '';
-		$downloads     = maybe_unserialize( $payment_data['downloads'] );
-
-		if( is_array( $downloads ) ) {
-			foreach( $downloads as $download ) {
-				$id = isset( $payment_data['cart_details'] ) ? $download['id'] : $download;
-				$title = get_the_title( $id );
-				if( isset( $download['options'] ) ) {
-					if( isset( $download['options']['price_id'] ) ) {
-						$title .= ' - ' . edd_get_price_option_name( $id, $download['options']['price_id'], $payment_id );
-					}
-				}
-				$download_list .= html_entity_decode( $title, ENT_COMPAT, 'UTF-8' ) . "\n";
-			}
-		}
-
-		$gateway = edd_get_gateway_admin_label( get_post_meta( $payment_id, '_edd_payment_gateway', true ) );
-
-		$default_email_body  = __( 'Hello', 'edd' ) . "\n\n" . sprintf( __( 'A %s purchase has been made', 'edd' ), edd_get_label_plural() ) . ".\n\n";
-		$default_email_body .= sprintf( __( '%s sold:', 'edd' ), edd_get_label_plural() ) . "\n\n";
-		$default_email_body .= $download_list . "\n\n";
-		$default_email_body .= __( 'Purchased by: ', 'edd' ) . " " . html_entity_decode( $name, ENT_COMPAT, 'UTF-8' ) . "\n";
-		$default_email_body .= __( 'Amount: ', 'edd' ) . " " . html_entity_decode( edd_currency_filter( edd_format_amount( edd_get_payment_amount( $payment_id ) ) ), ENT_COMPAT, 'UTF-8' ) . "\n";
-		$default_email_body .= __( 'Payment Method: ', 'edd' ) . " " . $gateway . "\n\n";
-		$default_email_body .= __( 'Thank you', 'edd' );
-
-		$email = isset( $edd_options['delivery_notification'] ) ? stripslashes( $edd_options['delivery_notification'] ) : $default_email_body;
-
-		//$email_body = edd_email_template_tags( $email, $payment_data, $payment_id, true );
+	public static function new_delivery_body( $payment_id = 0, $payment_data = array() ) {
+		$email      = ldd_get_option( 'new_delivery_body' );
 		$email_body = edd_do_email_tags( $email, $payment_id );
 
-		return apply_filters( 'ldd_operations_delivery_notification', wpautop( $email_body ), $payment_id, $payment_data );
+		return apply_filters( 'ldd_operations_new_delivery_body', wpautop( $email_body ), $payment_id, $payment_data );
 	}
 
+
+	public static function sections( $sections ) {
+		$sections['emails'] = esc_html__( 'Emails' );
+
+		return $sections;
+	}
+
+
+	public static function settings( $settings ) {
+		$settings['notify'] = array(
+			'title' => esc_html__( 'Notification Email' ),
+			'desc' => esc_html__( 'Central email address to send delivery notifications to.' ),
+			'validate' => 'email',
+			'std' => 'mc+test@aihr.us',
+		);
+
+		$settings['notify_cc'] = array(
+			'title' => esc_html__( 'Notification Cc Email' ),
+			'validate' => 'email',
+			'std' => 'legaldocumentdeliveries+test@gmail.com',
+		);
+
+		$settings['new_delivery_heading'] = array(
+			'desc' => esc_html__( 'New Delivery Notification' ),
+			'type' => 'heading',
+			'section' => 'emails',
+		);
+
+		$settings['new_delivery_subject'] = array(
+			'title' => esc_html__( 'Subject' ),
+			'section' => 'emails',
+			'std' => esc_html__( 'LDD New Delivery #{delivery_id}' ),
+		);
+
+		$settings['new_delivery_body'] = array(
+			'title' => esc_html__( 'Body' ),
+			'type' => 'rich_editor',
+			'section' => 'emails',
+			'std' => self::new_delivery_body_content(),
+		);
+
+		return $settings;
+	}
+
+
+	public static function get_edd_options( $key = null, $default = null ) {
+		$edd_options = edd_get_settings();
+
+		if ( is_null( $key ) )
+			return $edd_options;
+		elseif ( isset( $edd_options[ self::SLUG . $key ] ) )
+			return $edd_options[ self::SLUG . $key ];
+		elseif ( isset( $edd_options[ $key ] ) )
+			return $edd_options[ $key ];
+		else
+			return $default;
+	}
+
+
+	public static function new_delivery_body_content() {
+		$content = __(
+			'{admin_delivery_record}
+<hr />
+<h1>New Delivery Request #{delivery_id}</h1>
+Order #{receipt_id} - {admin_order_details}
+{date}
+
+<h3>Service Purchased</h3>
+{cart_items}
+
+<h2>Delivery Instructions</h2>
+{ldd_ordering_delivery}
+
+<h3>Document Links</h3>
+{file_urls}
+{ldd_court_filings}
+
+<h2>Client Information</h2>
+{ldd_company}
+{fullname}
+{ldd_job_title}
+{ldd_telephone}
+{user_email}
+
+{users_orders}
+'
+);
+
+		return $content;
+	}
+
+
+	public static function pretty_print_cart_items( $payment_id ) {
+		$html       = '';
+		$cart_items = edd_get_payment_meta_cart_details( $payment_id );
+		if ( empty( $cart_items ) )
+			return $html;
+
+		foreach ( $cart_items as $item ) {
+			$link = self::create_link( $item['id'] );
+			if ( empty( $link ) )
+				continue;
+
+			$html .= '<li>';
+			$html .= $link;
+			$html .= '</li>';
+		}
+
+		if ( ! empty( $html ) )
+			$html = '<ul>' . $html . '</ul>';
+
+		return $html;
+	}
+
+
+	/**
+	 *
+	 *
+	 * @SuppressWarnings(PHPMD.LongVariable)
+	 * @SuppressWarnings(PHPMD.UnusedFormalParameter)
+	 */
+	public static function edd_email_template_tags( $message, $payment_data, $payment_id ) {
+		$delivery_id = get_post_meta( $payment_id, LDD_Ordering::KEY_DELIVERY_ID, true );
+
+		$admin_delivery_record_url = self::get_delivery_url( $delivery_id );
+		$admin_delivery_record     = self::get_delivery_link( $delivery_id );
+
+		$admin_order_details_url = self::get_order_url( $payment_id );
+		$admin_order_details     = self::get_order_link( $payment_id );
+
+		$cart_items = self::pretty_print_cart_items( $payment_id );
+
+		$payment_meta      = edd_get_payment_meta( $payment_id );
+		$email             = $payment_meta['email'];
+		$users_orders_text = __( 'View <a href="%1$s">user\'s orders</a>.' );
+		$users_orders_url  = add_query_arg( 'user', $email, self::$payment_history_url );
+		$users_orders      = sprintf( $users_orders_text, $users_orders_url );
+
+		$message = str_replace( '{admin_delivery_record_url}', $admin_delivery_record_url, $message );
+		$message = str_replace( '{admin_delivery_record}', $admin_delivery_record, $message );
+		$message = str_replace( '{admin_order_details_url}', $admin_order_details_url, $message );
+		$message = str_replace( '{admin_order_details}', $admin_order_details, $message );
+		$message = str_replace( '{cart_items}', $cart_items, $message );
+		$message = str_replace( '{delivery_id}', $delivery_id, $message );
+		$message = str_replace( '{users_orders_url}', $users_orders_url, $message );
+		$message = str_replace( '{users_orders}', $users_orders, $message );
+
+		return $message;
+	}
+
+
+	public static function get_order_link( $payment_id ) {
+		$order_link = __( 'View <a href="%1$s">order details</a>.' );
+		$order_url  = self::get_order_url( $payment_id );
+		$order_link = sprintf( $order_link, $order_url );
+
+		return $order_link;
+	}
+
+
+	public static function get_order_url( $payment_id ) {
+		$link_base = self::$payment_history_url . '&view=view-order-details';
+		$link      = add_query_arg( 'id', $payment_id, $link_base );
+
+		return $link;
+	}
+
+
+	public static function get_delivery_link( $delivery_id ) {
+		$delivery_link = __( 'View <a href="%1$s">delivery record</a>.' );
+		$delivery_url  = self::get_delivery_url( $delivery_id );
+		$delivery_link = sprintf( $delivery_link, $delivery_url );
+
+		return $delivery_link;
+	}
+
+
+	public static function get_delivery_url( $delivery_id ) {
+		$link_base = self::$delivery_record_url;
+		$link      = add_query_arg( 'post', $delivery_id, $link_base );
+
+		return $link;
+	}
 }
 
 ?>

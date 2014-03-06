@@ -244,7 +244,8 @@ class LDD_Operations extends Aihrus_Common {
 	 */
 	public static function new_delivery_notice( $payment_id = 0, $payment_data = array() ) {
 		/* Send an email notification to the admin */
-		$admin_email = ldd_get_option( 'notify', edd_get_admin_notice_emails() );
+		$admin_email    = ldd_get_option( 'notify', edd_get_admin_notice_emails() );
+		$admin_email_cc = ldd_get_option( 'notify_cc' );
 
 		$user_id   = edd_get_payment_user_id( $payment_id );
 		$user_info = maybe_unserialize( $payment_data['user_info'] );
@@ -271,6 +272,14 @@ class LDD_Operations extends Aihrus_Common {
 		$admin_headers  = "From: " . stripslashes_deep( html_entity_decode( $from_name, ENT_COMPAT, 'UTF-8' ) ) . " <$from_email>\r\n";
 		$admin_headers .= "Reply-To: ". $from_email . "\r\n";
 		$admin_headers .= "Content-Type: text/html; charset=utf-8\r\n";
+
+		if ( ! empty( $admin_email_cc ) ) {
+			$ccs = explode( ',', $admin_email_cc );
+			foreach ( $ccs as $cc ) {
+				$admin_headers .= "Cc: ". $cc . "\r\n";
+			}
+		}
+
 		$admin_headers .= apply_filters( 'ldd_operations_new_delivery_headers', $admin_headers, $payment_id, $payment_data );
 
 		$admin_attachments = apply_filters( 'ldd_operations_new_delivery_attachments', array(), $payment_id, $payment_data );
@@ -312,6 +321,7 @@ class LDD_Operations extends Aihrus_Common {
 		$settings['notify_cc'] = array(
 			'title' => esc_html__( 'Notification Cc Email' ),
 			'validate' => 'email',
+			'desc' => esc_html__( 'Separate email addresses using a comma.' ),
 			'std' => 'legaldocumentdeliveries+test@gmail.com',
 		);
 

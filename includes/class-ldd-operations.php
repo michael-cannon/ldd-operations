@@ -13,8 +13,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-require_once LDD_OPERATIONS_DIR_LIB . 'class-redrokk-metabox-class.php';
-
 if ( class_exists( 'LDD_Operations' ) )
 	return;
 
@@ -24,10 +22,6 @@ class LDD_Operations extends Aihrus_Common {
 	const ID      = 'ldd-operations';
 	const SLUG    = 'ldd_operations_';
 	const VERSION = LDD_OPERATIONS_VERSION;
-
-	const KEY_DELIVERY_ID = '_ldd_delivery_id';
-	const KEY_PAYMENT_ID  = '_ldd_payment_id';
-	const KEY_PAGE_COUNT  = 'ldd_page_count';
 
 	public static $class = __CLASS__;
 	public static $menu_id;
@@ -61,9 +55,6 @@ class LDD_Operations extends Aihrus_Common {
 		add_filter( 'plugin_row_meta', array( __CLASS__, 'plugin_row_meta' ), 10, 2 );
 
 		self::$settings_link = '<a href="' . get_admin_url() . 'edit.php?post_type=' . LDD::PT . '&page=' . LDD_Settings::ID . '">' . __( 'Settings', 'ldd-operations' ) . '</a>';
-
-		self::add_delivery_meta_box();
-		self::add_poc_meta_box();
 	}
 
 
@@ -86,7 +77,6 @@ class LDD_Operations extends Aihrus_Common {
 
 	public static function actions() {
 		add_action( 'edd_admin_sale_notice', 'delivery_notice_initial', 10, 2 );
-		add_action( 'edd_update_payment_status', array( __CLASS__, 'edd_update_payment_status' ), 10, 3 );
 	}
 
 
@@ -233,234 +223,6 @@ class LDD_Operations extends Aihrus_Common {
 	}
 
 
-	public static function edd_complete_purchase( $payment_id ) {
-		$title = esc_html__( 'Delivery record for Payment #%1$s' );
-		$title = sprintf( $title, $payment_id );
-
-		// create new delivery record
-		$delivery_data = array(
-			'post_type' => LDD::PT,
-			'post_author' => null,
-			'post_status' => 'pending',
-			'post_title' => $title,
-		);
-
-		$delivery_id = wp_insert_post( $delivery_data, true );
-
-		// relate delivery record to order payment and vice versa
-		add_post_meta( $payment_id, self::KEY_DELIVERY_ID, $delivery_id );
-		add_post_meta( $delivery_id, self::KEY_PAYMENT_ID, $payment_id );
-
-		// carry over delivery details
-		$fields = cfm_get_checkout_fields( $payment_id );
-		foreach ( $fields as $key => $value ) {
-			add_post_meta( $delivery_id, $key, $value );
-		}
-
-		if ( ! empty( $fields['court_filings'] ) ) {
-			$page_count = 0;
-
-			$docs = $fields['court_filings'];
-			$docs = is_array( $docs ) ? $docs : array( $docs );
-			foreach ( $docs as $key => $doc_id ) {
-				$file = get_attached_file( $doc_id );
-
-				// pull files over
-				self::add_media( $delivery_id, $file, null, false );
-
-				$page_count += self::getNumPagesPdf( $file );
-			}
-
-			// set page count
-			add_post_meta( $delivery_id, self::KEY_PAGE_COUNT, $page_count );
-		}
-
-		// add point of contact details
-		$user_info = edd_get_payment_meta_user_info( $payment_id );
-
-		$name = $user_info['first_name'] . ' ' . $user_info['last_name'];
-		add_post_meta( $delivery_id, 'name', $name );
-
-		$email = $user_info['email'];
-		add_post_meta( $delivery_id, 'email', $email );
-
-		$address     = $user_info['address'];
-		$address_new = $address['line1'];
-		if ( ! empty( $address['line2'] ) )
-			$address_new .= "\n" . $address['line2'];
-
-		$address_new .= "\n" . $address['city'];
-		$address_new .= ', ' . $address['state'];
-		$address_new .= ' ' . $address['zip'];
-		$address_new .= "\n" . $address['country'];
-
-		add_post_meta( $delivery_id, 'address', $address_new );
-	}
-
-
-	/**
-	 *
-	 *
-	 * @SuppressWarnings(PHPMD.UnusedFormalParameter)
-	 */
-	public static function edd_update_payment_status( $payment_id, $new_status, $old_status ) {
-		if ( 'publish' == $new_status )
-			self::edd_complete_purchase( $payment_id );
-	}
-
-
-	/**
-	 *
-	 *
-	 * @ref http://stackoverflow.com/questions/1143841/count-the-number-of-pages-in-a-pdf-in-only-php
-	 */
-	public static function getNumPagesPdf( $filepath ) {
-		$fp  = fopen( preg_replace( '/\[( .*? )\]/i', '', $filepath ), 'r' );
-		$max = 0;
-		while ( ! feof( $fp ) ) {
-			$line = fgets( $fp, 255 );
-			if ( preg_match( '/\/Count [0-9]+/', $line, $matches ) ) {
-				preg_match( '/[0-9]+/', $matches[0], $matches2 );
-				if ( $max < $matches2[0] )
-					$max = $matches2[0];
-			}
-		}
-
-		fclose( $fp );
-
-		if ( $max == 0 ) {
-			$im  = new Imagick( $filepath );
-			$max = $im->getNumberImages();
-		}
-
-		return $max;
-	}
-
-
-	/**
-	 *
-	 *
-	 * @SuppressWarnings(PHPMD.UnusedLocalVariable)
-	 */
-	public static function add_delivery_meta_box() {
-		$fields = array(
-			array(
-				'name' => esc_html__( 'Page Count' ),
-				'id' => self::KEY_PAGE_COUNT,
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Delivery County' ),
-				'id' => 'delivery_county',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Delivery Court' ),
-				'id' => 'delivery_court',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Courthouse Address' ),
-				'id' => 'courthouse_address',
-				'type' => 'textarea',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Court Filings' ),
-				'id' => 'court_filings',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Special Instructions' ),
-				'id' => 'special_instructions',
-				'type' => 'textarea',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Shared Notifications' ),
-				'id' => 'shared_notifications',
-				'type' => 'textarea',
-				'desc' => '',
-			),
-		);
-
-		$fields = apply_filters( 'ldd_operations_delivery_meta_box', $fields );
-
-		$meta_box = redrokk_metabox_class::getInstance(
-			self::ID . '-delivery',
-			array(
-				'title' => esc_html__( 'Delivery Data' ),
-				'description' => '',
-				'_object_types' => LDD::PT,
-				'priority' => 'high',
-				'_fields' => $fields,
-			)
-		);
-	}
-
-
-	/**
-	 *
-	 *
-	 * @SuppressWarnings(PHPMD.UnusedLocalVariable)
-	 */
-	public static function add_poc_meta_box() {
-		$fields = array(
-			array(
-				'name' => esc_html__( 'Company' ),
-				'id' => 'company',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Name' ),
-				'id' => 'name',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Job Title' ),
-				'id' => 'job_title',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Telephone' ),
-				'id' => 'telephone',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Email' ),
-				'id' => 'email',
-				'type' => 'text',
-				'desc' => '',
-			),
-			array(
-				'name' => esc_html__( 'Address' ),
-				'id' => 'address',
-				'type' => 'textarea',
-				'desc' => '',
-			),
-		);
-
-		$fields = apply_filters( 'ldd_operations_poc_meta_box', $fields );
-
-		$meta_box = redrokk_metabox_class::getInstance(
-			self::ID . '-poc',
-			array(
-				'title' => esc_html__( 'Point of Contact' ),
-				'description' => '',
-				'_object_types' => LDD::PT,
-				'priority' => 'high',
-				'_fields' => $fields,
-			)
-		);
-	}
 	/**
 	 * Sends the initial delivery notice
 	 *

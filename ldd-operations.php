@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Legal Document Deliveries - Operations
  * Plugin URI: https://github.com/michael-cannon/ldd-operations
- * Description: LDD ordering system helper
+ * Description: LDD operations system helper
  * Version: 1.0.0
  * Author: Michael Cannon
  * Author URI: http://aihr.us/resume/

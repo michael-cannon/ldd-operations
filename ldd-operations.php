@@ -67,6 +67,7 @@ if ( ! ldd_operations_requirements_check() ) {
 	return false;
 }
 
+require_once LDD_OPERATIONS_DIR_INC . 'functions.php';
 require_once LDD_OPERATIONS_DIR_INC . 'class-ldd-operations.php';
 
 

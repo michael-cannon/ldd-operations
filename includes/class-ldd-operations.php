@@ -60,6 +60,8 @@ class LDD_Operations extends Aihrus_Common {
 		add_filter( 'plugin_row_meta', array( __CLASS__, 'plugin_row_meta' ), 10, 2 );
 
 		self::$settings_link = '<a href="' . get_admin_url() . 'edit.php?post_type=' . LDD::PT . '&page=' . LDD_Settings::ID . '">' . __( 'Settings', 'ldd-operations' ) . '</a>';
+
+		self::add_agent_meta_box();
 	}
 
 
@@ -481,6 +483,51 @@ Order #{receipt_id} - {admin_order_details}
 		$link      = add_query_arg( 'post', $delivery_id, $link_base );
 
 		return $link;
+	}
+
+
+	/**
+	 *
+	 *
+	 * @SuppressWarnings(PHPMD.UnusedLocalVariable)
+	 */
+	public static function add_agent_meta_box() {
+		$fields = array(
+			array(
+				'name' => esc_html__( 'Delivery Agent' ),
+				'id' => 'agent',
+				'type' => 'select_users',
+				'desc' => '',
+			),
+			array(
+				'name' => esc_html__( 'Order Receipt' ),
+				'id' => 'order_date',
+				'type' => 'datetime',
+			),
+			array(
+				'name' => esc_html__( 'Last Update' ),
+				'id' => 'last_update',
+				'type' => 'datetime',
+			),
+			array(
+				'name' => esc_html__( 'Time Elasped' ),
+				'id' => 'time_elasped',
+				'type' => 'ldd_operations_time_elasped',
+			),
+		);
+
+		$fields = apply_filters( 'ldd_operations_agent_meta_box', $fields );
+
+		$meta_box = redrokk_metabox_class::getInstance(
+			self::ID . '-agent',
+			array(
+				'title' => esc_html__( 'Delivery Handling' ),
+				'description' => '',
+				'_object_types' => LDD::PT,
+				'context' => 'side',
+				'_fields' => $fields,
+			)
+		);
 	}
 }
 

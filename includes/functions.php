@@ -17,13 +17,8 @@ if ( ! function_exists( 'ldd_operations_time_elasped' ) ) {
 	function ldd_operations_time_elasped( $args, $field, $meta ) {
 		$delivery_id = get_the_ID();
 
-		$order_date = get_post_meta( $delivery_id, 'order_date', true );
-		if ( empty( $order_date ) )
-			$order_date = 0;
-
+		$order_date  = get_post_meta( $delivery_id, 'order_date', true );
 		$last_update = get_post_meta( $delivery_id, 'last_update', true );
-		if ( empty( $last_update ) )
-			$last_update = 0;
 
 		echo human_time_diff( $order_date, $last_update );
 	}

@@ -17,10 +17,17 @@ if ( ! function_exists( 'ldd_operations_time_elasped' ) ) {
 	function ldd_operations_time_elasped( $args, $field, $meta ) {
 		$delivery_id = get_the_ID();
 
-		$order_date  = get_post_meta( $delivery_id, 'order_date', true );
-		$last_update = get_post_meta( $delivery_id, 'last_update', true );
-
-		echo human_time_diff( $order_date, $last_update );
+		echo LDD_Operations::time_elasped( $delivery_id );
 	}
 }
+
+
+if ( ! function_exists( 'ldd_operations_time_elasped_current' ) ) {
+	function ldd_operations_time_elasped_current( $args, $field, $meta ) {
+		$delivery_id = get_the_ID();
+
+		echo LDD_Operations::time_elasped( $delivery_id, false );
+	}
+}
+
 ?>

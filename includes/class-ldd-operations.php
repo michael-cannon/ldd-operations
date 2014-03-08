@@ -32,6 +32,8 @@ class LDD_Operations extends Aihrus_Common {
 	public static $styles        = array();
 	public static $styles_called = false;
 
+	private static $pre_save_data;
+
 	public static $delivery_record_url;
 	public static $payment_history_url;
 
@@ -83,7 +85,8 @@ class LDD_Operations extends Aihrus_Common {
 
 
 	public static function actions() {
-		add_action( 'edd_admin_sale_notice', array( __CLASS__, 'new_delivery_notice' ), 10, 2 );
+		add_action( 'edd_admin_sale_notice', array( __CLASS__, 'notice_new_delivery' ), 10, 2 );
+		add_action( 'save_post', array( __CLASS__, 'save_post' ), 20 );
 	}
 
 
@@ -91,6 +94,7 @@ class LDD_Operations extends Aihrus_Common {
 		add_filter( 'ldd_sections', array( __CLASS__, 'sections' ) );
 		add_filter( 'ldd_settings', array( __CLASS__, 'settings' ) );
 		add_filter( 'edd_email_template_tags', array( __CLASS__, 'edd_email_template_tags' ), 10, 3 );
+		add_filter( 'wp_insert_post_data', array( __CLASS__, 'current_delivery_data' ), 10, 2 );
 	}
 
 
@@ -244,64 +248,13 @@ class LDD_Operations extends Aihrus_Common {
 	 * @param array $payment_data Payment Meta and Data
 	 * @return void
 	 */
-	public static function new_delivery_notice( $payment_id = 0, $payment_data = array() ) {
-		/* Send an email notification to the admin */
-		$admin_email    = ldd_get_option( 'notify', edd_get_admin_notice_emails() );
-		$admin_email_cc = ldd_get_option( 'notify_cc' );
-
-		$user_id   = edd_get_payment_user_id( $payment_id );
-		$user_info = maybe_unserialize( $payment_data['user_info'] );
-		if ( isset( $user_id ) && $user_id > 0 ) {
-			$user_data = get_userdata($user_id);
-			$name      = $user_data->display_name;
-		} elseif ( isset( $user_info['first_name'] ) && isset( $user_info['last_name'] ) ) {
-			$name = $user_info['first_name'] . ' ' . $user_info['last_name'];
-		} else {
-			$name = $user_info['email'];
-		}
-
-		$admin_message  = edd_get_email_body_header();
-		$admin_message .= self::new_delivery_body( $payment_id, $payment_data );
-		$admin_message .= edd_get_email_body_footer();
-
-		$admin_subject = ldd_get_option( 'new_delivery_subject' );
-		$admin_subject = edd_do_email_tags( $admin_subject, $payment_id );
-		$admin_subject = apply_filters( 'ldd_operations_new_delivery_subject', $admin_subject, $payment_id, $payment_data );
-
-		$from_name  = self::get_edd_options( 'from_name', get_bloginfo( 'name' ) );
-		$from_email = self::get_edd_options( 'from_email', get_option( 'admin_email' ) );
-
-		$admin_headers  = "From: " . stripslashes_deep( html_entity_decode( $from_name, ENT_COMPAT, 'UTF-8' ) ) . " <$from_email>\r\n";
-		$admin_headers .= "Reply-To: ". $from_email . "\r\n";
-		$admin_headers .= "Content-Type: text/html; charset=utf-8\r\n";
-
-		if ( ! empty( $admin_email_cc ) ) {
-			$ccs = explode( ',', $admin_email_cc );
-			foreach ( $ccs as $cc ) {
-				$admin_headers .= "Cc: ". $cc . "\r\n";
-			}
-		}
-
-		$admin_headers .= apply_filters( 'ldd_operations_new_delivery_headers', $admin_headers, $payment_id, $payment_data );
-
-		$admin_attachments = apply_filters( 'ldd_operations_new_delivery_attachments', array(), $payment_id, $payment_data );
-
-		wp_mail( $admin_email, $admin_subject, $admin_message, $admin_headers, $admin_attachments );
-	}
-
-
-	/**
-	 * Delivery Template Body
-	 *
-	 * @param int $payment_id Payment ID
-	 * @param array $payment_data Payment Data
-	 * @return string $email_body Body of the email
-	 */
-	public static function new_delivery_body( $payment_id = 0, $payment_data = array() ) {
-		$email      = ldd_get_option( 'new_delivery_body' );
-		$email_body = edd_do_email_tags( $email, $payment_id );
-
-		return apply_filters( 'ldd_operations_new_delivery_body', wpautop( $email_body ), $payment_id, $payment_data );
+	public static function notice_new_delivery( $payment_id = 0, $payment_data = array() ) {
+		// Send new delivery notification to admin
+		$delivery_id = get_post_meta( $payment_id, LDD_Ordering::KEY_DELIVERY_ID, true );
+		$part        = 'new_delivery';
+		self::notice_mailer( $delivery_id, $part );
+	   
+		do_action( 'ldd_operations_notice_' . $part , $delivery_id );
 	}
 
 
@@ -336,7 +289,7 @@ class LDD_Operations extends Aihrus_Common {
 		$settings['new_delivery_subject'] = array(
 			'title' => esc_html__( 'Subject' ),
 			'section' => 'emails',
-			'std' => esc_html__( 'LDD New Delivery #{delivery_id}' ),
+			'std' => esc_html__( 'LDD Delivery #{delivery_id}: New Delivery' ),
 		);
 
 		$settings['new_delivery_body'] = array(
@@ -344,6 +297,44 @@ class LDD_Operations extends Aihrus_Common {
 			'type' => 'rich_editor',
 			'section' => 'emails',
 			'std' => self::new_delivery_body_content(),
+		);
+
+		$settings['assign_agent_heading'] = array(
+			'desc' => esc_html__( 'Assign Agent Notification' ),
+			'type' => 'heading',
+			'section' => 'emails',
+		);
+
+		$settings['assign_agent_subject'] = array(
+			'title' => esc_html__( 'Subject' ),
+			'section' => 'emails',
+			'std' => esc_html__( 'LDD Delivery #{delivery_id}: Agent Assigned' ),
+		);
+
+		$settings['assign_agent_body'] = array(
+			'title' => esc_html__( 'Body' ),
+			'type' => 'rich_editor',
+			'section' => 'emails',
+			'std' => self::assign_agent_body_content(),
+		);
+
+		$settings['status_change_heading'] = array(
+			'desc' => esc_html__( 'Status Change Notification' ),
+			'type' => 'heading',
+			'section' => 'emails',
+		);
+
+		$settings['status_change_subject'] = array(
+			'title' => esc_html__( 'Subject' ),
+			'section' => 'emails',
+			'std' => esc_html__( 'LDD Delivery #{delivery_id}: Status Change' ),
+		);
+
+		$settings['status_change_body'] = array(
+			'title' => esc_html__( 'Body' ),
+			'type' => 'rich_editor',
+			'section' => 'emails',
+			'std' => self::status_change_body_content(),
 		);
 
 		return $settings;
@@ -368,7 +359,7 @@ class LDD_Operations extends Aihrus_Common {
 		$content = __(
 			'{admin_delivery_record}
 <hr />
-<h1>New Delivery Request #{delivery_id}</h1>
+<h1>Delivery #{delivery_id}: New Delivery</h1>
 Order #{receipt_id} - {admin_order_details}
 {date}
 
@@ -424,6 +415,10 @@ Order #{receipt_id} - {admin_order_details}
 	 */
 	public static function edd_email_template_tags( $message, $payment_data, $payment_id ) {
 		$delivery_id = get_post_meta( $payment_id, LDD_Ordering::KEY_DELIVERY_ID, true );
+		if ( is_null( $delivery_id ) ) {
+			$delivery_id = $payment_id;
+			$payment_id  = get_post_meta( $delivery_id, LDD_Ordering::KEY_PAYMENT_ID, true );
+		}
 
 		$admin_delivery_record_url = self::get_delivery_url( $delivery_id );
 		$admin_delivery_record     = self::get_delivery_link( $delivery_id );
@@ -504,18 +499,18 @@ Order #{receipt_id} - {admin_order_details}
 				'type' => 'datetime',
 			),
 			array(
+				'name' => esc_html__( 'Time Since Ordered' ),
+				'id' => 'time_since_order',
+				'type' => 'ldd_operations_time_elasped_current',
+			),
+			array(
 				'name' => esc_html__( 'Last Update' ),
 				'id' => 'last_update',
 				'type' => 'datetime',
 			),
 			array(
-				'name' => esc_html__( 'Time Between Updates' ),
-				'id' => 'time_updates',
-				'type' => 'ldd_operations_time_elasped',
-			),
-			array(
-				'name' => esc_html__( 'Time to Delivery' ),
-				'id' => 'time_delivery',
+				'name' => esc_html__( 'Time Since Last Update' ),
+				'id' => 'time_since_update',
 				'type' => 'ldd_operations_time_elasped',
 			),
 		);
@@ -532,6 +527,375 @@ Order #{receipt_id} - {admin_order_details}
 				'_fields' => $fields,
 			)
 		);
+	}
+
+
+	/**
+	 *
+	 *
+	 * @SuppressWarnings(PHPMD.Superglobals)
+	 */
+	public static function save_post( $delivery_id ) {
+		$post_type = get_post_type( $delivery_id );
+		if ( ! in_array( $post_type, array( LDD::PT ) ) )
+			return;
+
+		if ( ! current_user_can( 'edit_post', $delivery_id ) )
+			return;
+
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE )
+			return;
+
+		if ( 'revision' == $post_type )
+			return;
+
+		if ( isset( $_POST[ self::ID ] ) && ! wp_verify_nonce( $_POST[ self::ID ], self::BASE ) )
+			return;
+
+		remove_action( 'save_post', array( __CLASS__, 'save_post' ), 20 );
+
+		// check for change in agent
+		$agent_before = 0;
+		if ( isset( self::$pre_save_data['agent'][0] ) ) {
+			$agent_before = intval( self::$pre_save_data['agent'][0] );
+		}
+
+		$agent_now = 0;
+		if ( isset( $_POST['agent'] ) ) {
+			$agent_now = intval( $_POST['agent'] );
+		}
+
+		$notice_assign_agent = false;
+		if ( $agent_before != $agent_now ) {
+			$agent_before_data = get_userdata( $agent_before );
+			$agent_before_name = $agent_before_data->display_name;
+
+			$agent_now_data = get_userdata( $agent_now );
+			$agent_now_name = $agent_now_data->display_name;
+
+			$text = esc_html__( 'Agent changed from %1$s to %2$s' ); 
+			$note = sprintf( $text, $agent_before_name, $agent_now_name );
+			LDD::insert_delivery_note( $delivery_id, $note );
+
+			$notice_assign_agent = true;
+		}
+
+		// check for change in status
+		$status_before = false;
+		if ( isset( self::$pre_save_data['post_status'] ) ) {
+			$status_before = self::$pre_save_data['post_status'];
+		}
+
+		$status_now = false;
+		if ( isset( $_POST['post_status'] ) ) {
+			$status_now = $_POST['post_status'];
+		}
+
+		$notice_status_change = false;
+		if ( $status_before != $status_now ) {
+			$text = esc_html__( 'Status changed from %1$s to %2$s' ); 
+			$note = sprintf( $text, $status_before, $status_now );
+			LDD::insert_delivery_note( $delivery_id, $note );
+
+			$notice_status_change = true;
+		}
+
+		if ( $notice_status_change ) {
+			self::notice_status_change( $delivery_id );
+		} elseif ( $notice_assign_agent ) {
+			self::notice_assign_agent( $delivery_id );
+		}
+
+		// update last_update entry
+		update_post_meta( $delivery_id, 'last_update', current_time( 'mysql' ) );
+	}
+
+
+	public static function notice_assign_agent( $delivery_id ) {
+		// admin
+		$part = 'assign_agent';
+		self::notice_mailer( $delivery_id, $part );
+
+		$to = 'agent';
+		$cc = false;
+		self::notice_mailer( $delivery_id, $part, $to, $cc );
+	   
+		$to = 'client';
+		$cc = 'shared';
+		self::notice_mailer( $delivery_id, $part, $to, $cc );
+	   
+		do_action( 'ldd_operations_notice_' . $part , $delivery_id );
+	}
+
+
+	/**
+	 *
+	 *
+	 * @SuppressWarnings(PHPMD.Superglobals)
+	 */
+	public static function current_delivery_data( $data , $postarr ) {
+		$delivery_id = isset( $data['post_ID'] ) ? $data['post_ID'] : get_the_ID();
+		$post_type   = get_post_type( $delivery_id );
+		if ( ! in_array( $post_type, array( LDD::PT ) ) )
+			return $data;
+
+		if ( ! current_user_can( 'edit_post', $delivery_id ) )
+			return $data;
+
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE )
+			return $data;
+
+		if ( 'revision' == $post_type )
+			return $data;
+
+		if ( isset( $_POST[ self::ID ] ) && ! wp_verify_nonce( $_POST[ self::ID ], self::BASE ) )
+			return $data;
+
+		self::$pre_save_data                = get_post_custom( $delivery_id );
+		self::$pre_save_data['post_status'] = get_post_status( $delivery_id );
+		
+		return $data;
+	}
+
+
+	public static function notice_status_change( $delivery_id ) {
+		// admin
+		$part = 'status_change';
+		self::notice_mailer( $delivery_id, $part );
+
+		$to = 'agent';
+		$cc = false;
+		self::notice_mailer( $delivery_id, $part, $to, $cc );
+	   
+		$to = 'client';
+		$cc = 'shared';
+		self::notice_mailer( $delivery_id, $part, $to, $cc );
+	   
+		do_action( 'ldd_operations_notice_' . $part , $delivery_id );
+	}
+
+
+	public static function time_elasped( $delivery_id, $status_diff = true  ) {
+		$order_date  = get_post_meta( $delivery_id, 'order_date', true );
+
+		if ( $status_diff )
+			$last_update = get_post_meta( $delivery_id, 'last_update', true );
+		else
+			$last_update = current_time( 'mysql' );
+
+		$time_diff = human_time_diff( strtotime( $order_date ), strtotime( $last_update ) );
+
+		return $time_diff;
+	}
+
+
+	public static function get_message_body( $delivery_id, $part = 'new_delivery_body' ) {
+		$payment_id = get_post_meta( $delivery_id, LDD_Ordering::KEY_PAYMENT_ID, true );
+
+		$email      = ldd_get_option( $part, '' );
+		$email_body = edd_do_email_tags( $email, $payment_id );
+
+		$body  = edd_get_email_body_header();
+		$body .= $email_body;
+		$body .= apply_filters( 'ldd_operations_message_' . $part, wpautop( $email_body ), $delivery_id );
+		$body .= edd_get_email_body_footer();
+
+		return $body;
+	}
+
+
+	public static function get_message_subject( $delivery_id, $part = 'new_delivery_subject' ) {
+		$payment_id = get_post_meta( $delivery_id, LDD_Ordering::KEY_PAYMENT_ID, true );
+
+		$subject_part = ldd_get_option( $part, '' );
+
+		$subject = edd_do_email_tags( $subject_part, $payment_id );
+		$subject = apply_filters( 'ldd_operations_message_' . $part, $subject, $delivery_id );
+
+		return $subject;
+	}
+
+
+	public static function get_admin_email() {
+		return ldd_get_option( 'notify', edd_get_admin_notice_emails() );
+	}
+
+
+	public static function get_admin_email_cc() {
+		$ccs = ldd_get_option( 'notify_cc' );
+		if ( empty( $ccs ) )
+			return;
+
+		$headers = self::get_email_ccs( $ccs );
+
+		return $headers;
+	}
+
+
+	public static function get_email_ccs( $cc_list ) {
+		$headers = '';
+
+		if ( false !== strstr( $cc_list, ',' ) )
+			$ccs = explode( ',', $cc_list );
+		else
+			$ccs = explode( "\n", $cc_list );
+
+		foreach ( $ccs as $cc ) {
+			if ( Aihrus_Settings::validate_email( $cc ) )
+				$headers .= "Cc: ". $cc . "\r\n";
+		}
+
+		return $headers;
+	}
+
+
+	public static function get_from_name() {
+		return self::get_edd_options( 'from_name', get_bloginfo( 'name' ) );
+	}
+
+
+	public static function get_from_email() {
+		return self::get_edd_options( 'from_email', get_option( 'admin_email' ) );
+	}
+
+
+	public static function get_email_headers_from() {
+		$from_name  = self::get_from_name();
+		$from_email = self::get_from_email();
+
+		$headers  = 'From: ' . stripslashes_deep( html_entity_decode( $from_name, ENT_COMPAT, 'UTF-8' ) ) . ' <' . $from_email . '>' . "\r\n";
+		$headers .= 'Reply-To: ' . $from_email . "\r\n";
+
+		return $headers;
+	}
+
+
+	public static function get_email_headers_html() {
+		$headers = 'Content-Type: text/html; charset=utf-8' . "\r\n";
+
+		return $headers;
+	}
+
+
+	public static function notice_mailer( $delivery_id, $part, $to = 'admin', $cc = 'admin' ) {
+		if ( 'admin' == $to ) {
+			$to = self::get_admin_email();
+		} elseif ( 'agent' == $to ) {
+			$da_id   = get_post_meta( $delivery_id, 'agent', true );
+			$da_data = get_userdata( $da_id );
+			$to      = $da_data->user_email;
+		} elseif ( 'client' == $to ) {
+			$delivery    = get_post( $delivery_id );
+			$client_id   = $delivery->post_author;
+			$client_data = get_userdata( $client_id );
+			$to          = $client_data->user_email;
+		}
+		
+		if ( ! Aihrus_Settings::validate_email( $to ) ) {
+			$text = esc_html__( 'To email address doesn\'t validate: %1$s. "%2$s" failed to be sent.' ); 
+			$note = sprintf( $text, $to, $part );
+			LDD::insert_delivery_note( $delivery_id, $note );
+
+			return false;
+		}
+
+		$admin_subject = self::get_message_subject( $delivery_id, $part . '_subject' );
+		$admin_message = self::get_message_body( $delivery_id, $part . '_body' );
+
+		$admin_headers  = self::get_email_headers_from();
+		$admin_headers .= self::get_email_headers_html();
+		if ( 'admin' == $cc )
+			$admin_headers .= self::get_admin_email_cc();
+		elseif ( 'shared' == $cc )
+			$admin_headers .= self::get_email_cc( $cc );
+
+		$admin_headers = apply_filters( 'ldd_operations_' . $part . '_headers', $admin_headers, $delivery_id );
+
+		$admin_attachments = apply_filters( 'ldd_operations_' . $part . '_attachments', array(), $delivery_id );
+
+		$mailed = wp_mail( $to, $admin_subject, $admin_message, $admin_headers, $admin_attachments );
+		if ( ! $mailed ) {
+			$text = esc_html__( 'Mail wasn\'t sent: %7$s %6$s %1$s %6$s %2$s %6$s %3$s %6$s %4$s %6$s %5$s' );
+			$note = sprintf( $text, $to, $admin_subject, $admin_message, $admin_headers, $admin_attachments, "\n\n\n", print_r( $mailed, true ) );
+			LDD::insert_delivery_note( $delivery_id, $note );
+		}
+
+		return $mailed;
+	}
+
+
+	public static function get_email_cc( $delivery_id ) {
+		$ccs = get_post_meta( $delivery_id, 'shared_notification', true );
+		if ( empty( $ccs ) )
+			return;
+
+		$headers = self::get_email_ccs( $ccs );
+
+		return $headers;
+	}
+
+
+	public static function assign_agent_body_content() {
+		$content = __(
+			'{admin_delivery_record}
+<hr />
+<h1>Delivery #{delivery_id}: Agent Assigned</h1>
+Order #{receipt_id} - {admin_order_details}
+{date}
+
+<h2>Delivery Progress</h2>
+{ldd_delivery_progress}
+
+<h2>Service Purchased</h2>
+{cart_items}
+
+<h2>Delivery Information</h2>
+{ldd_delivery_details}
+
+<h2>Client Information</h2>
+{ldd_company}
+{fullname}
+{ldd_job_title}
+{ldd_telephone}
+{user_email}
+
+{users_orders}
+'
+);
+
+		return $content;
+	}
+
+
+	public static function status_change_body_content() {
+		$content = __(
+			'{admin_delivery_record}
+<hr />
+<h1>Delivery #{delivery_id}: Status Change</h1>
+Order #{receipt_id} - {admin_order_details}
+{date}
+
+<h2>Delivery Progress</h2>
+{ldd_delivery_progress}
+
+<h2>Service Purchased</h2>
+{cart_items}
+
+<h2>Delivery Information</h2>
+{ldd_delivery_details}
+
+<h2>Client Information</h2>
+{ldd_company}
+{fullname}
+{ldd_job_title}
+{ldd_telephone}
+{user_email}
+
+{users_orders}
+'
+);
+
+		return $content;
 	}
 }
 

@@ -497,7 +497,6 @@ Order #{receipt_id} - {admin_order_details}
 				'name' => esc_html__( 'Delivery Agent' ),
 				'id' => 'agent',
 				'type' => 'select_users',
-				'desc' => '',
 			),
 			array(
 				'name' => esc_html__( 'Order Receipt' ),

@@ -510,8 +510,13 @@ Order #{receipt_id} - {admin_order_details}
 				'type' => 'datetime',
 			),
 			array(
-				'name' => esc_html__( 'Time Elasped' ),
-				'id' => 'time_elasped',
+				'name' => esc_html__( 'Time Between Updates' ),
+				'id' => 'time_updates',
+				'type' => 'ldd_operations_time_elasped',
+			),
+			array(
+				'name' => esc_html__( 'Time to Delivery' ),
+				'id' => 'time_delivery',
 				'type' => 'ldd_operations_time_elasped',
 			),
 		);

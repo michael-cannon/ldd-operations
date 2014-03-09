@@ -357,28 +357,12 @@ class LDD_Operations extends Aihrus_Common {
 
 	public static function new_delivery_body_content() {
 		$content = __(
-			'{admin_delivery_record}
+			'{admin_delivery_link}
 <hr />
 <h1>Delivery #{delivery_id}: New Delivery</h1>
-Order #{receipt_id} - {admin_order_details}
-{date}
-
-<h2>Service Purchased</h2>
-{cart_items}
-
-<h2>Delivery Information</h2>
-{ldd_delivery_details}
-
-<h2>Client Information</h2>
-{ldd_company}
-{fullname}
-{ldd_job_title}
-{ldd_telephone}
-{user_email}
-
-{users_orders}
 '
 );
+		$content .= self::core_body_content();
 
 		return $content;
 	}
@@ -420,28 +404,44 @@ Order #{receipt_id} - {admin_order_details}
 			$payment_id  = get_post_meta( $delivery_id, LDD_Ordering::KEY_PAYMENT_ID, true );
 		}
 
-		$admin_delivery_record_url = self::get_delivery_url( $delivery_id );
-		$admin_delivery_record     = self::get_delivery_link( $delivery_id );
+		$admin_delivery_url  = self::get_delivery_url( $delivery_id );
+		$admin_delivery_link = self::get_delivery_link( $delivery_id );
 
-		$admin_order_details_url = self::get_order_url( $payment_id );
-		$admin_order_details     = self::get_order_link( $payment_id );
+		$admin_order_url  = self::get_order_url( $payment_id );
+		$admin_order_link = self::get_order_link( $payment_id );
 
 		$cart_items = self::pretty_print_cart_items( $payment_id );
+
+		$delivery            = get_post( $delivery_id );
+		$status              = $delivery->post_status;
+		$text                = esc_html__( 'Status: %s' );
+		$ldd_delivery_status = sprintf( $text, $status );
+
+		$agent_id           = get_post_meta( $delivery_id, 'agent', true );
+		$agent_info         = get_userdata( $agent_id );
+		$agent              = $agent_info->display_name;
+		$text               = esc_html__( 'Agent: %s' );
+		$ldd_delivery_agent = sprintf( $text, $agent );
+
+		$ldd_delivery_progress = $ldd_delivery_status;
+		$ldd_delivery_progress .= "\n";
+		$ldd_delivery_progress .= $ldd_delivery_agent;
 
 		$payment_meta      = edd_get_payment_meta( $payment_id );
 		$email             = $payment_meta['email'];
 		$users_orders_text = __( 'View <a href="%1$s">user\'s orders</a>.' );
 		$users_orders_url  = add_query_arg( 'user', $email, self::$payment_history_url );
-		$users_orders      = sprintf( $users_orders_text, $users_orders_url );
+		$users_orders_link = sprintf( $users_orders_text, $users_orders_url );
 
-		$message = str_replace( '{admin_delivery_record_url}', $admin_delivery_record_url, $message );
-		$message = str_replace( '{admin_delivery_record}', $admin_delivery_record, $message );
-		$message = str_replace( '{admin_order_details_url}', $admin_order_details_url, $message );
-		$message = str_replace( '{admin_order_details}', $admin_order_details, $message );
+		$message = str_replace( '{admin_delivery_link}', $admin_delivery_link, $message );
+		$message = str_replace( '{admin_delivery_url}', $admin_delivery_url, $message );
+		$message = str_replace( '{admin_order_link}', $admin_order_link, $message );
+		$message = str_replace( '{admin_order_url}', $admin_order_url, $message );
 		$message = str_replace( '{cart_items}', $cart_items, $message );
 		$message = str_replace( '{delivery_id}', $delivery_id, $message );
+		$message = str_replace( '{ldd_delivery_progress}', $ldd_delivery_progress, $message );
+		$message = str_replace( '{users_orders_link}', $users_orders_link, $message );
 		$message = str_replace( '{users_orders_url}', $users_orders_url, $message );
-		$message = str_replace( '{users_orders}', $users_orders, $message );
 
 		return $message;
 	}
@@ -620,9 +620,11 @@ Order #{receipt_id} - {admin_order_details}
 		$cc = false;
 		self::notice_mailer( $delivery_id, $part, $to, $cc );
 	   
-		$to = 'client';
-		$cc = 'shared';
-		self::notice_mailer( $delivery_id, $part, $to, $cc );
+		if ( false ) {
+			$to = 'client';
+			$cc = 'shared';
+			self::notice_mailer( $delivery_id, $part, $to, $cc );
+		}
 	   
 		do_action( 'ldd_operations_notice_' . $part , $delivery_id );
 	}
@@ -667,9 +669,13 @@ Order #{receipt_id} - {admin_order_details}
 		$cc = false;
 		self::notice_mailer( $delivery_id, $part, $to, $cc );
 	   
-		$to = 'client';
-		$cc = 'shared';
-		self::notice_mailer( $delivery_id, $part, $to, $cc );
+		$delivery = get_post( $delivery_id );
+		$status   = $delivery->post_status;
+		if ( 'publish' == $status ) {
+			$to = 'client';
+			$cc = 'shared';
+			self::notice_mailer( $delivery_id, $part, $to, $cc );
+		}
 	   
 		do_action( 'ldd_operations_notice_' . $part , $delivery_id );
 	}
@@ -696,7 +702,6 @@ Order #{receipt_id} - {admin_order_details}
 		$email_body = edd_do_email_tags( $email, $payment_id );
 
 		$body  = edd_get_email_body_header();
-		$body .= $email_body;
 		$body .= apply_filters( 'ldd_operations_message_' . $part, wpautop( $email_body ), $delivery_id );
 		$body .= edd_get_email_body_footer();
 
@@ -837,31 +842,12 @@ Order #{receipt_id} - {admin_order_details}
 
 	public static function assign_agent_body_content() {
 		$content = __(
-			'{admin_delivery_record}
+			'{admin_delivery_link}
 <hr />
 <h1>Delivery #{delivery_id}: Agent Assigned</h1>
-Order #{receipt_id} - {admin_order_details}
-{date}
-
-<h2>Delivery Progress</h2>
-{ldd_delivery_progress}
-
-<h2>Service Purchased</h2>
-{cart_items}
-
-<h2>Delivery Information</h2>
-{ldd_delivery_details}
-
-<h2>Client Information</h2>
-{ldd_company}
-{fullname}
-{ldd_job_title}
-{ldd_telephone}
-{user_email}
-
-{users_orders}
 '
 );
+		$content .= self::core_body_content();
 
 		return $content;
 	}
@@ -869,10 +855,21 @@ Order #{receipt_id} - {admin_order_details}
 
 	public static function status_change_body_content() {
 		$content = __(
-			'{admin_delivery_record}
+			'{admin_delivery_link}
 <hr />
 <h1>Delivery #{delivery_id}: Status Change</h1>
-Order #{receipt_id} - {admin_order_details}
+'
+);
+		$content .= self::core_body_content();
+
+		return $content;
+	}
+
+
+	public static function core_body_content() {
+		$content = __(
+			'
+Order #{receipt_id} - {admin_order_link}
 {date}
 
 <h2>Delivery Progress</h2>
@@ -891,7 +888,7 @@ Order #{receipt_id} - {admin_order_details}
 {ldd_telephone}
 {user_email}
 
-{users_orders}
+{users_orders_link}
 '
 );
 

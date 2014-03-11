@@ -50,17 +50,11 @@ class LDD_Operations extends Aihrus_Common {
 		self::actions();
 		self::filters();
 
-		add_action( 'admin_init', array( __CLASS__, 'admin_init' ) );
-		// fixme add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
-		add_action( 'init', array( __CLASS__, 'init' ) );
 		add_shortcode( 'ldd_operations_shortcode', array( __CLASS__, 'ldd_operations_shortcode' ) );
 	}
 
 
 	public static function admin_init() {
-		add_filter( 'plugin_action_links', array( __CLASS__, 'plugin_action_links' ), 10, 2 );
-		add_filter( 'plugin_row_meta', array( __CLASS__, 'plugin_row_meta' ), 10, 2 );
-
 		self::$settings_link = '<a href="' . get_admin_url() . 'edit.php?post_type=' . LDD::PT . '&page=' . LDD_Settings::ID . '">' . __( 'Settings', 'ldd-operations' ) . '</a>';
 
 		self::add_agent_meta_box();
@@ -85,15 +79,20 @@ class LDD_Operations extends Aihrus_Common {
 
 
 	public static function actions() {
+		// fixme add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ) );
+		add_action( 'admin_init', array( __CLASS__, 'admin_init' ) );
 		add_action( 'edd_admin_sale_notice', array( __CLASS__, 'notice_new_delivery' ), 10, 2 );
+		add_action( 'init', array( __CLASS__, 'init' ) );
 		add_action( 'save_post', array( __CLASS__, 'save_post' ), 20 );
 	}
 
 
 	public static function filters() {
+		add_filter( 'edd_email_template_tags', array( __CLASS__, 'edd_email_template_tags' ), 10, 3 );
 		add_filter( 'ldd_sections', array( __CLASS__, 'sections' ) );
 		add_filter( 'ldd_settings', array( __CLASS__, 'settings' ) );
-		add_filter( 'edd_email_template_tags', array( __CLASS__, 'edd_email_template_tags' ), 10, 3 );
+		add_filter( 'plugin_action_links', array( __CLASS__, 'plugin_action_links' ), 10, 2 );
+		add_filter( 'plugin_row_meta', array( __CLASS__, 'plugin_row_meta' ), 10, 2 );
 		add_filter( 'wp_insert_post_data', array( __CLASS__, 'current_delivery_data' ), 10, 2 );
 	}
 
@@ -417,10 +416,14 @@ class LDD_Operations extends Aihrus_Common {
 		$text                = esc_html__( 'Status: %s' );
 		$ldd_delivery_status = sprintf( $text, $status );
 
-		$agent_id           = get_post_meta( $delivery_id, 'agent', true );
-		$agent_info         = get_userdata( $agent_id );
-		$agent              = $agent_info->display_name;
-		$text               = esc_html__( 'Agent: %s' );
+		$agent_id = get_post_meta( $delivery_id, 'agent', true );
+		$text     = esc_html__( 'Agent: %s' );
+		$agent    = esc_html__( 'None assigned' );
+		if ( ! empty( $agent_id ) ) {
+			$agent_info = get_userdata( $agent_id );
+			$agent      = $agent_info->display_name;
+		}
+
 		$ldd_delivery_agent = sprintf( $text, $agent );
 
 		$ldd_delivery_progress = $ldd_delivery_status;

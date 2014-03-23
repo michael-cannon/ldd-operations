@@ -93,6 +93,7 @@ class LDD_Operations extends Aihrus_Common {
 		add_filter( 'ldd_settings', array( __CLASS__, 'settings' ) );
 		add_filter( 'plugin_action_links', array( __CLASS__, 'plugin_action_links' ), 10, 2 );
 		add_filter( 'plugin_row_meta', array( __CLASS__, 'plugin_row_meta' ), 10, 2 );
+		add_filter( 'user_contactmethods', array( __CLASS__, 'user_contactmethods' ), 10, 2 );
 		add_filter( 'wp_insert_post_data', array( __CLASS__, 'current_delivery_data' ), 10, 2 );
 	}
 
@@ -896,6 +897,19 @@ Order #{receipt_id} - {admin_order_link}
 );
 
 		return $content;
+	}
+
+
+	public static function user_contactmethods( $contactmethods ) {
+		unset( $contactmethods['facebook'] );
+		unset( $contactmethods['googleplus'] );
+		unset( $contactmethods['twitter'] );
+
+		$contactmethods['mobile']   = __( 'Mobile Phone' );
+		$contactmethods['state']    = __( 'State' );
+		$contactmethods['counties'] = __( 'Counties' );
+
+		return $contactmethods;
 	}
 }
 
